@@ -18,7 +18,7 @@ import numpy as np
 from skimage.metrics import structural_similarity as ssim
 import matplotlib.pyplot as plt
 
-from diffusers import DDPMScheduler, DDIMScheduler
+from diffusers import DDPMScheduler, DDIMScheduler, DPMSolverMultistepScheduler
 
 # Internal module imports
 from utils import build_unet_from_config
@@ -81,13 +81,20 @@ def create_scheduler(scheduler_type: str, num_train_timesteps: int = 1000,
             prediction_type='epsilon'
         )
     elif scheduler_type == 'ddim':
+        # Enable clipping and set_alpha_to_one for more stable pixel-space sampling
         return DDIMScheduler(
             num_train_timesteps=num_train_timesteps,
             beta_schedule=beta_schedule,
             prediction_type='epsilon',
-            clip_sample=False,
-            set_alpha_to_one=False,
+            clip_sample=True,
+            set_alpha_to_one=True,
             steps_offset=0
+        )
+    elif scheduler_type == 'dpm':
+        return DPMSolverMultistepScheduler(
+            num_train_timesteps=num_train_timesteps,
+            beta_schedule=beta_schedule,
+            prediction_type='epsilon'
         )
     else:
         raise ValueError(f"Unsupported scheduler type: {scheduler_type}")
@@ -143,15 +150,12 @@ def sample_ddim(model, scheduler, conditions: torch.Tensor,
     """DDIM sampling"""
     batch_size, _, height, width = conditions.shape
     
-    # Initial noise
+    
     image = torch.randn((batch_size, 1, height, width), device=device)
     
     # Set inference steps
     scheduler.set_timesteps(num_inference_steps, device=device)
     
-    # Apply initial noise sigma
-    if hasattr(scheduler, 'init_noise_sigma'):
-        image = image * scheduler.init_noise_sigma
     
     model.eval()
     start_time = time.time()
@@ -184,6 +188,39 @@ def sample_ddim(model, scheduler, conditions: torch.Tensor,
     
     return image, sampling_time
 
+
+def sample_dpm(model, scheduler, conditions: torch.Tensor,
+               num_inference_steps: int = 50, device: str = 'cuda') -> Tuple[torch.Tensor, float]:
+    """DPM-Solver (multistep) sampling"""
+    batch_size, _, height, width = conditions.shape
+    image = torch.randn((batch_size, 1, height, width), device=device)
+
+    scheduler.set_timesteps(num_inference_steps, device=device)
+
+    model.eval()
+    start_time = time.time()
+
+    with torch.no_grad():
+        for timestep in scheduler.timesteps:
+            if hasattr(scheduler, 'scale_model_input'):
+                scaled_image = scheduler.scale_model_input(image, timestep)
+            else:
+                scaled_image = image
+
+            model_input = torch.cat([conditions, scaled_image], dim=1)
+
+            timestep_batch = torch.tensor([timestep] * batch_size, device=device).long()
+            out = model(model_input, timestep_batch)
+            noise_pred = out[0] if isinstance(out, tuple) else out
+
+            image = scheduler.step(
+                noise_pred, timestep, image, return_dict=False
+            )[0]
+
+    end_time = time.time()
+    sampling_time = end_time - start_time
+
+    return image, sampling_time
 
 def preprocess_conditions(conditions: torch.Tensor) -> torch.Tensor:
     """Preprocess condition inputs, consistent with training"""
@@ -293,6 +330,123 @@ def build_model_config(args: argparse.Namespace, in_ch: int, out_ch: int) -> Dic
     }
 
 
+def _sanitize_filename_component(name: str) -> str:
+    """Sanitize a string to be safe for filenames."""
+    # Replace problematic characters with underscore
+    safe = ''.join(c if c.isalnum() or c in ('-', '_') else '_' for c in name)
+    # Collapse consecutive underscores
+    while '__' in safe:
+        safe = safe.replace('__', '_')
+    return safe.strip('_') or 'sample'
+
+
+def save_images(generated: torch.Tensor, ground_truth: torch.Tensor, conditions: torch.Tensor,
+                names: List[str], batch_idx: int, output_dir: str, global_index_base: int):
+    """Save generated images, ground truth, and conditions with globally unique filenames."""
+    import os
+    
+    # Create subdirectories for different types of images
+    gen_dir = os.path.join(output_dir, 'generated')
+    gt_dir = os.path.join(output_dir, 'ground_truth')
+    cond_dir = os.path.join(output_dir, 'conditions')
+    comp_dir = os.path.join(output_dir, 'comparison')
+    
+    os.makedirs(gen_dir, exist_ok=True)
+    os.makedirs(gt_dir, exist_ok=True)
+    os.makedirs(cond_dir, exist_ok=True)
+    os.makedirs(comp_dir, exist_ok=True)
+    
+    batch_size = generated.shape[0]
+    
+    for i in range(batch_size):
+        # Compute a global index to guarantee uniqueness across the whole run
+        global_index = global_index_base + i
+        # Derive a human-friendly name, then sanitize
+        raw_name = None
+        if names and i < len(names):
+            try:
+                raw_name = names[i]
+                if isinstance(raw_name, bytes):
+                    raw_name = raw_name.decode('utf-8', errors='ignore')
+                else:
+                    raw_name = str(raw_name)
+            except Exception:
+                raw_name = None
+        sample_human = _sanitize_filename_component(raw_name) if raw_name is not None else 'sample'
+        # Always include a unique prefix to avoid any overwrite
+        base_name = f"g{global_index:07d}_b{batch_idx:04d}_s{i:02d}_{sample_human}"
+        
+        # Convert tensors to numpy arrays
+        gen_img = generated[i, 0].detach().cpu().numpy()
+        gt_img = ground_truth[i, 0].detach().cpu().numpy()
+        
+        # Save individual images
+        plt.figure(figsize=(6, 6))
+        plt.imshow(gen_img, cmap='viridis')
+        plt.colorbar()
+        plt.title(f'Generated - {base_name}')
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(os.path.join(gen_dir, f'{base_name}_generated.png'), dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        plt.figure(figsize=(6, 6))
+        plt.imshow(gt_img, cmap='viridis')
+        plt.colorbar()
+        plt.title(f'Ground Truth - {base_name}')
+        plt.axis('off')
+        plt.tight_layout()
+        plt.savefig(os.path.join(gt_dir, f'{base_name}_ground_truth.png'), dpi=150, bbox_inches='tight')
+        plt.close()
+        
+        # Save conditions (buildings and transmitters)
+        if conditions.shape[1] >= 2:
+            buildings = conditions[i, 0].detach().cpu().numpy()
+            tx = conditions[i, 1].detach().cpu().numpy()
+            
+            fig, axes = plt.subplots(1, 2, figsize=(12, 5))
+            
+            im1 = axes[0].imshow(buildings, cmap='gray')
+            axes[0].set_title(f'Buildings - {base_name}')
+            axes[0].axis('off')
+            plt.colorbar(im1, ax=axes[0])
+            
+            im2 = axes[1].imshow(tx, cmap='hot')
+            axes[1].set_title(f'Transmitters - {base_name}')
+            axes[1].axis('off')
+            plt.colorbar(im2, ax=axes[1])
+            
+            plt.tight_layout()
+            plt.savefig(os.path.join(cond_dir, f'{base_name}_conditions.png'), dpi=150, bbox_inches='tight')
+            plt.close()
+        
+        # Save comparison plot
+        fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+        
+        # Generated
+        im1 = axes[0].imshow(gen_img, cmap='viridis')
+        axes[0].set_title(f'Generated - {base_name}')
+        axes[0].axis('off')
+        plt.colorbar(im1, ax=axes[0])
+        
+        # Ground Truth
+        im2 = axes[1].imshow(gt_img, cmap='viridis')
+        axes[1].set_title(f'Ground Truth - {base_name}')
+        axes[1].axis('off')
+        plt.colorbar(im2, ax=axes[1])
+        
+        # Difference
+        diff = np.abs(gen_img - gt_img)
+        im3 = axes[2].imshow(diff, cmap='Reds')
+        axes[2].set_title(f'Absolute Difference - {base_name}')
+        axes[2].axis('off')
+        plt.colorbar(im3, ax=axes[2])
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(comp_dir, f'{base_name}_comparison.png'), dpi=150, bbox_inches='tight')
+        plt.close()
+
+
 def save_results(metrics_all: Dict[str, List[float]], args: argparse.Namespace, 
                 total_time: float, avg_time_per_batch: float):
     """Save results to files"""
@@ -389,7 +543,7 @@ def parse_args() -> argparse.Namespace:
     
     # Basic arguments
     parser.add_argument('--scheduler_type', type=str, default='ddim', 
-                       choices=['ddpm', 'ddim'], help='Scheduler type')
+                       choices=['ddpm', 'ddim', 'dpm'], help='Scheduler type')
     parser.add_argument('--data_name', type=str, default='Radio', 
                        choices=['Radio', 'Radio_2', 'Radio_3'], help='Dataset name')
     parser.add_argument('--data_dir', type=str, required=True, 
@@ -398,10 +552,13 @@ def parse_args() -> argparse.Namespace:
                        help='Trained model checkpoint file path')
     parser.add_argument('--output_dir', type=str, default='./sample_test_results', 
                        help='Results output directory')
+    parser.add_argument('--save_images', action='store_true', 
+                       help='Save generated images, ground truth, and comparisons')
     
     # Inference arguments
     parser.add_argument('--ddpm_steps', type=int, default=1000, help='DDPM inference steps')
     parser.add_argument('--ddim_steps', type=int, default=50, help='DDIM inference steps')
+    parser.add_argument('--dpm_steps', type=int, default=50, help='DPM-Solver inference steps')
     parser.add_argument('--ddim_eta', type=float, default=1.0, help='DDIM eta parameter')
     parser.add_argument('--diffusion_steps', type=int, default=1000, help='Training diffusion steps')
     parser.add_argument('--noise_schedule', type=str, default='linear', 
@@ -479,8 +636,12 @@ def main():
         num_inference_steps = args.ddpm_steps
         print(f"DDPM inference steps: {num_inference_steps}")
     else:
-        num_inference_steps = args.ddim_steps
-        print(f"DDIM inference steps: {num_inference_steps}, eta: {args.ddim_eta}")
+        if args.scheduler_type == 'ddim':
+            num_inference_steps = args.ddim_steps
+            print(f"DDIM inference steps: {num_inference_steps}, eta: {args.ddim_eta}")
+        elif args.scheduler_type == 'dpm':
+            num_inference_steps = args.dpm_steps
+            print(f"DPM-Solver inference steps: {num_inference_steps}")
     
     # Start inference testing
     print("Starting inference testing...")
@@ -508,9 +669,14 @@ def main():
                 model, scheduler, conditions, num_inference_steps, device
             )
         else:
-            generated, sampling_time = sample_ddim(
-                model, scheduler, conditions, num_inference_steps, device, args.ddim_eta
-            )
+            if args.scheduler_type == 'ddim':
+                generated, sampling_time = sample_ddim(
+                    model, scheduler, conditions, num_inference_steps, device, args.ddim_eta
+                )
+            elif args.scheduler_type == 'dpm':
+                generated, sampling_time = sample_dpm(
+                    model, scheduler, conditions, num_inference_steps, device
+                )
         
         batch_times.append(sampling_time)
         sample_count += conditions.shape[0]
@@ -519,6 +685,20 @@ def main():
         batch_metrics = calculate_metrics(generated, ground_truth)
         for metric_name, values in batch_metrics.items():
             all_metrics[metric_name].extend(values)
+        
+        # Save images if requested
+        if args.save_images:
+            # Use a global base index so filenames are unique across the whole run
+            base_index = sample_count - conditions.shape[0]
+            save_images(
+                generated,
+                ground_truth,
+                conditions,
+                names,
+                batch_idx,
+                args.output_dir,
+                base_index,
+            )
         
         # Print batch results
         avg_psnr = np.mean([v for v in batch_metrics['PSNR'] if np.isfinite(v)])
