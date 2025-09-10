@@ -105,7 +105,7 @@ conda activate RMDM
 python train.py \
   --data_name Radio \
   --data_dir /path/to/RadioMapSeer \
-  --batch_size 4 \
+  --batch_size 16 \
   --mixed_precision no \
   --use_checkpoint True \
   --num_channels 96 \
@@ -122,7 +122,7 @@ accelerate launch --num_processes=2 --multi_gpu --mixed_precision=no \
   train.py \
   --data_name Radio \
   --data_dir /path/to/RadioMapSeer \
-  --batch_size 8 \
+  --batch_size 32 \
   --mixed_precision no \
   --use_checkpoint True \
   --num_channels 96 \
@@ -139,7 +139,7 @@ python train.py \
   --resume_from ./checkpoints_phy/model_phy_step5000.pth \
   --data_name Radio \
   --data_dir /path/to/RadioMapSeer \
-  --batch_size 4 \
+  --batch_size 16 \
   --mixed_precision no \
   --save_dir ./checkpoints_phy
 ```
