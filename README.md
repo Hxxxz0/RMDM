@@ -149,12 +149,11 @@ python train.py \
 **Quick Inference Test (Recommended)**:
 ```bash
 python sample_test.py \
-  --scheduler_type ddim \
+  --scheduler_type ddpm \
   --data_dir /path/to/RadioMapSeer \
   --checkpoint_path ./checkpoints_phy/model_phy_step10000.pth \
   --output_dir ./inference_results \
-  --ddim_steps 50 \
-  --ddim_eta 1.0 \
+  --ddpm_steps 1000 \
   --batch_size 4 \
   --num_samples 100
 ```
@@ -162,27 +161,33 @@ python sample_test.py \
 **Full Test Set Evaluation**:
 ```bash
 python sample_test.py \
-  --scheduler_type ddim \
+  --scheduler_type ddpm \
   --data_dir /path/to/RadioMapSeer \
   --checkpoint_path ./checkpoints_phy/model_phy_step10000.pth \
   --output_dir ./full_evaluation \
-  --ddim_steps 50 \
-  --ddim_eta 1.0 \
+  --ddpm_steps 1000 \
   --batch_size 4 \
   --num_samples -1
 ```
 
-**High-Quality DDPM Inference**:
+**Inference with Image Saving** 🖼️:
 ```bash
 python sample_test.py \
   --scheduler_type ddpm \
   --data_dir /path/to/RadioMapSeer \
   --checkpoint_path ./checkpoints_phy/model_phy_step10000.pth \
-  --output_dir ./ddpm_results \
+  --output_dir ./results_with_images \
   --ddpm_steps 1000 \
-  --batch_size 2 \
-  --num_samples 50
+  --batch_size 4 \
+  --num_samples 50 \
+  --save_images
 ```
+
+This will generate:
+- 📊 **Generated radio maps**: `generated/` folder
+- 🎯 **Ground truth maps**: `ground_truth/` folder  
+- 🏗️ **Input conditions**: `conditions/` folder (buildings + transmitters)
+- 🔍 **Comparison plots**: `comparison/` folder (generated vs. ground truth vs. difference)
 
 ## 📜 Academic Citation
 
