@@ -111,8 +111,8 @@ python train.py \
   --num_channels 96 \
   --attention_resolutions 16 \
   --log_interval 50 \
-  --max_steps 10000 \
-  --save_interval 1000 \
+  --max_steps 100000 \
+  --save_interval 10000 \
   --save_dir ./checkpoints_phy
 ```
 
@@ -128,8 +128,8 @@ accelerate launch --num_processes=2 --multi_gpu --mixed_precision=no \
   --num_channels 96 \
   --attention_resolutions 16 \
   --log_interval 50 \
-  --max_steps 10000 \
-  --save_interval 1000 \
+  --max_steps 100000 \
+  --save_interval 10000 \
   --save_dir ./checkpoints_phy
 ```
 
