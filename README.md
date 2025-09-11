@@ -5,7 +5,8 @@
 ## 📢 NEWS
 
 🎉 **[NEW!]** Our paper has been **accepted** by **ACM MM BNI 2025** as an **Oral Presentation**! 🏆  
-🔓 **All code is now available** — Ready for researchers and practitioners to explore and build upon our work! 💻
+🔓 **All code is now available** — Ready for researchers and practitioners to explore and build upon our work! 💻  
+🎯 **Pre-trained model weights are now available** — Download from Baidu Netdisk: [Link](https://pan.baidu.com/s/14p0aofKzp0jhreg-9NMKdQ) (Code: dnd4) 📦
 
 ## 🌟 Project Highlights
 
@@ -99,7 +100,7 @@ RadioMapSeer/
 
 ### 🎯 Training
 
-**Single GPU Training (Recommended for testing)**:
+**Single GPU Training (SRM)**:
 ```bash
 conda activate RMDM
 python train.py \
@@ -116,7 +117,7 @@ python train.py \
   --save_dir ./checkpoints_phy
 ```
 
-**Multi-GPU Training (For production)**:
+**Multi-GPU Training (SRM)**:
 ```bash
 accelerate launch --num_processes=2 --multi_gpu --mixed_precision=no \
   train.py \
@@ -146,19 +147,19 @@ python train.py \
 
 ### 🔮 Inference & Evaluation
 
-**Quick Inference Test (Recommended)**:
+**Quick Inference Test (SRM)**:
 ```bash
 python sample_test.py \
   --scheduler_type ddpm \
   --data_dir /path/to/RadioMapSeer \
-  --checkpoint_path ./checkpoints_phy/model_phy_step10000.pth \
+  --checkpoint_path ./checkpoints_phy/model_phy_step100000.pth \
   --output_dir ./inference_results \
   --ddpm_steps 1000 \
   --batch_size 4 \
   --num_samples 100
 ```
 
-**Full Test Set Evaluation**:
+**Full Test Set Evaluation (SRM)**:
 ```bash
 python sample_test.py \
   --scheduler_type ddpm \
